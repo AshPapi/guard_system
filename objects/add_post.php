@@ -7,9 +7,9 @@ if (!isset($_GET['object_id']) || !is_numeric($_GET['object_id'])) {
     exit;
 }
 
-$object_id = (int)$_GET['object_id'];
+$objectId = (int)$_GET['object_id'];
 $stmt = $pdo->prepare("SELECT name FROM objects WHERE id = ?");
-$stmt->execute([$object_id]);
+$stmt->execute([$objectId]);
 $object = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$object) {
@@ -19,27 +19,29 @@ if (!$object) {
 
 $error = '';
 $success = '';
+$createdPostNumber = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $headGuardId = (int)($_POST['head_guard_id'] ?? 0);
     if (!$headGuardId) {
-        $error = 'Выберите главного охранника.';
+        $error = 'Выберите старшего охранника.';
     } else {
         try {
             $stmt = $pdo->prepare("SELECT 1 FROM posts WHERE head_guard_id = ?");
             $stmt->execute([$headGuardId]);
             if ($stmt->fetch()) {
-                throw new Exception('Этот главный охранник уже закреплён за другим постом.');
+                throw new Exception('Этот старший уже закреплён за другим постом.');
             }
 
             $stmt = $pdo->prepare("SELECT COALESCE(MAX(post_number), 0) + 1 FROM posts WHERE object_id = ?");
-            $stmt->execute([$object_id]);
-            $next_number = $stmt->fetchColumn();
+            $stmt->execute([$objectId]);
+            $nextNumber = (int)$stmt->fetchColumn();
 
             $stmt = $pdo->prepare("INSERT INTO posts (object_id, post_number, head_guard_id) VALUES (?, ?, ?)");
-            $stmt->execute([$object_id, $next_number, $headGuardId]);
+            $stmt->execute([$objectId, $nextNumber, $headGuardId]);
 
-            $success = "Пост №{$next_number} создан!";
+            $success = "Пост №{$nextNumber} создан.";
+            $createdPostNumber = $nextNumber;
         } catch (Exception $e) {
             $error = 'Ошибка: ' . $e->getMessage();
         }
@@ -51,44 +53,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Добавить пост</title>
+    <title>Добавление поста</title>
     <link rel="stylesheet" href="../assets/styles.css">
-    </head>
+</head>
 <body>
+<div class="page-wrapper">
+    <div class="header">
+        <h2>Добавление поста</h2>
+        <a href="../logout.php">Выйти</a>
+    </div>
+    <div class="nav">
+        <a href="../dashboard.php">На главную</a>
+        <a href="list.php">Список объектов</a>
+        <a href="view.php?id=<?= $objectId ?>">Карточка объекта</a>
+    </div>
+
     <div class="container">
-        <h2>Добавить пост</h2>
-        <div class="info">
-            <p>Объект: <strong><?= htmlspecialchars($object['name']) ?></strong></p>
+        <div class="card" style="margin-bottom:20px;">
+            <h3 class="section-title">Объект</h3>
+            <p><strong>Название:</strong> <?= htmlspecialchars($object['name']) ?></p>
         </div>
 
-        <?php if ($error): ?>
-            <div class="error"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <?php if ($success): ?>
-            <div class="success"><?= htmlspecialchars($success) ?></div>
-            <a href="view.php?id=<?= $object_id ?>" class="btn">Перейти к объекту</a>
-        <?php else: ?>
-            <form method="POST">
-                <label>Главный охранник (обязательно)</label>
-                <select name="head_guard_id" required>
-                    <option value="">— Выберите —</option>
-                    <?php
-                    $headGuards = $pdo->query("
-                        SELECT id, full_name 
-                        FROM employees 
-                        WHERE position = 'head_guard' 
-                          AND is_active = true
-                          AND id NOT IN (SELECT head_guard_id FROM posts WHERE head_guard_id IS NOT NULL)
-                        ORDER BY full_name
-                    ");
-                    while ($hg = $headGuards->fetch(PDO::FETCH_ASSOC)): ?>
-                        <option value="<?= (int)$hg['id'] ?>"><?= htmlspecialchars($hg['full_name']) ?></option>
-                    <?php endwhile; ?>
-                </select>
-                <button type="submit" class="btn">Создать пост</button>
-                <a href="view.php?id=<?= $object_id ?>" style="margin-left: 10px; text-decoration: none; display: inline-block; padding: 10px 16px; background: #6c757d; color: white; border-radius: 4px;">Отмена</a>
-            </form>
-        <?php endif; ?>
+        <div class="form-card">
+            <?php if ($error): ?>
+                <div class="notification error" style="display:block;"><?= htmlspecialchars($error) ?></div>
+            <?php elseif ($success): ?>
+                <div class="notification success" style="display:block;"><?= htmlspecialchars($success) ?></div>
+            <?php endif; ?>
+
+            <?php if ($success): ?>
+                <div class="form-actions" style="margin-top:8px;">
+                    <a href="view.php?id=<?= $objectId ?>" class="btn btn-primary">Вернуться к объекту</a>
+                    <a href="add_post.php?object_id=<?= $objectId ?>" class="btn btn-ghost">Добавить ещё</a>
+                </div>
+            <?php else: ?>
+                <form method="POST">
+                    <div class="form-group">
+                        <label>Старший охранник (свободные)</label>
+                        <select name="head_guard_id" required>
+                            <option value="">Выберите сотрудника</option>
+                            <?php
+                            $headGuards = $pdo->query("
+                                SELECT id, full_name 
+                                FROM employees 
+                                WHERE position = 'head_guard' 
+                                  AND is_active = true
+                                  AND id NOT IN (SELECT head_guard_id FROM posts WHERE head_guard_id IS NOT NULL)
+                                ORDER BY full_name
+                            ");
+                            while ($hg = $headGuards->fetch(PDO::FETCH_ASSOC)): ?>
+                                <option value="<?= (int)$hg['id'] ?>"><?= htmlspecialchars($hg['full_name']) ?></option>
+                            <?php endwhile; ?>
+                        </select>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Создать пост</button>
+                        <a href="view.php?id=<?= $objectId ?>" class="btn btn-ghost">Отмена</a>
+                    </div>
+                </form>
+            <?php endif; ?>
+        </div>
     </div>
+</div>
 </body>
 </html>

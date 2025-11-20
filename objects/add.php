@@ -10,7 +10,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $address = trim($_POST['address'] ?? '');
     $description = trim($_POST['description'] ?? '');
 
-    if (!$name || !$address) {
+    if ($name === '' || $address === '') {
         $error = 'Название и адрес обязательны.';
     } else {
         try {
@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $allowed = ['jpg', 'jpeg', 'png'];
                 $ext = strtolower(pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION));
                 if (!in_array($ext, $allowed, true)) {
-                    throw new Exception('Разрешены только JPG/PNG.');
+                    throw new Exception('Допустимы только изображения JPG или PNG.');
                 }
                 if ($_FILES['photo']['error'] !== UPLOAD_ERR_OK) {
                     throw new Exception('Ошибка загрузки файла.');
@@ -53,41 +53,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Добавить объект</title>
+    <title>Добавление объекта</title>
     <link rel="stylesheet" href="../assets/styles.css">
 </head>
 <body>
-    <div class="container">
-        <h2>Добавить объект</h2>
-        <?php if ($error): ?>
-            <div class="error"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <?php if ($success): ?>
-            <div class="success"><?= htmlspecialchars($success) ?></div>
-        <?php endif; ?>
-
-        <form method="POST" enctype="multipart/form-data">
-            <div class="form-group">
-                <label>Название *</label>
-                <input type="text" name="name" value="<?= htmlspecialchars($_POST['name'] ?? '') ?>" required>
-            </div>
-            <div class="form-group">
-                <label>Адрес *</label>
-                <input type="text" name="address" value="<?= htmlspecialchars($_POST['address'] ?? '') ?>" required>
-            </div>
-            <div class="form-group">
-                <label>Фото (jpg, png)</label>
-                <input type="file" name="photo" accept="image/jpeg,image/png">
-            </div>
-            <div class="form-group">
-                <label>Описание</label>
-                <textarea name="description"><?= htmlspecialchars($_POST['description'] ?? '') ?></textarea>
-            </div>
-            <div class="form-actions">
-                <button type="submit" class="btn btn-primary">Добавить</button>
-                <a href="list.php" class="btn btn-ghost">← Назад к списку</a>
-            </div>
-        </form>
+<div class="page-wrapper">
+    <div class="header">
+        <h2>Добавление объекта</h2>
+        <a href="../logout.php">Выйти</a>
     </div>
+    <div class="nav">
+        <a href="../dashboard.php">На главную</a>
+        <a href="list.php">К списку объектов</a>
+    </div>
+
+    <div class="container">
+        <div class="form-card">
+            <?php if ($error): ?>
+                <div class="notification error" style="display:block;"><?= htmlspecialchars($error) ?></div>
+            <?php elseif ($success): ?>
+                <div class="notification success" style="display:block;"><?= htmlspecialchars($success) ?></div>
+            <?php endif; ?>
+
+            <form method="POST" enctype="multipart/form-data">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Название *</label>
+                        <input type="text" name="name" value="<?= htmlspecialchars($_POST['name'] ?? '') ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Адрес *</label>
+                        <input type="text" name="address" value="<?= htmlspecialchars($_POST['address'] ?? '') ?>" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Фотография (jpg, png)</label>
+                    <input type="file" name="photo" accept="image/jpeg,image/png">
+                </div>
+                <div class="form-group">
+                    <label>Описание</label>
+                    <textarea name="description" rows="4"><?= htmlspecialchars($_POST['description'] ?? '') ?></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Добавить объект</button>
+                    <a href="list.php" class="btn btn-ghost">Вернуться к списку</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 </body>
 </html>

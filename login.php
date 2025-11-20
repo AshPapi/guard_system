@@ -10,12 +10,15 @@ if (isset($_SESSION['user_id'])) {
 }
 
 $error = '';
+$login = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $login = trim($_POST['login'] ?? '');
     $password = $_POST['password'] ?? '';
 
-    if ($login && $password) {
+    if ($login === '' || $password === '') {
+        $error = 'Введите логин и пароль.';
+    } else {
         require_once __DIR__ . '/includes/db.php';
 
         $stmt = $pdo->prepare("SELECT id, login, password FROM users WHERE login = ?");
@@ -39,8 +42,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: /dashboard.php');
             exit;
         }
+
+        $error = 'Неверный логин или пароль.';
     }
-    $error = 'Неверный логин или пароль.';
 }
 ?>
 
@@ -50,28 +54,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <title>Вход в систему</title>
     <link rel="stylesheet" href="assets/styles.css">
-    </head>
-<body>
-<div class="page-wrapper">
-    <div class="login-wrapper form-card">
-        <h2 class="section-title" style="text-align:center;">Авторизация</h2>
-        <?php if ($error): ?>
-            <div class="notification error" style="display:block;"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <form method="POST">
-            <div class="form-group">
-                <label>Логин</label>
-                <input type="text" name="login" placeholder="Логин" required>
-            </div>
-            <div class="form-group">
-                <label>Пароль</label>
-                <input type="password" name="password" placeholder="Пароль" required>
-            </div>
-            <div class="form-actions" style="justify-content:center;">
-                <button type="submit" class="btn btn-primary">Войти</button>
-            </div>
-        </form>
-    </div>
+</head>
+<body class="auth-page">
+<div class="auth-card">
+    <div class="auth-badge">Центр управления постами</div>
+    <h1>Вход в систему</h1>
+    <p class="auth-subtitle">Укажите учетные данные, чтобы продолжить работу.</p>
+
+    <?php if ($error): ?>
+        <div class="notification error" style="display:block;"><?= htmlspecialchars($error) ?></div>
+    <?php endif; ?>
+
+    <form method="POST" class="auth-form" autocomplete="on">
+        <label for="login">Логин</label>
+        <input
+            id="login"
+            type="text"
+            name="login"
+            value="<?= htmlspecialchars($login) ?>"
+            placeholder="Введите логин"
+            autocomplete="username"
+            required
+        >
+
+        <label for="password">Пароль</label>
+        <input
+            id="password"
+            type="password"
+            name="password"
+            placeholder="Введите пароль"
+            autocomplete="current-password"
+            required
+        >
+
+        <button type="submit" class="btn btn-primary btn-auth">Продолжить</button>
+    </form>
 </div>
 </body>
 </html>

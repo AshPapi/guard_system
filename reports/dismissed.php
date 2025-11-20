@@ -46,7 +46,23 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
 
     $output = fopen('php://output', 'w');
     fwrite($output, "\xEF\xBB\xBF");
-    fputcsv($output, ['Объект', 'Адрес', 'Пост', 'Главный охранник', 'Сотрудник', 'Начало смены', 'Окончание смены', 'Замечание', 'Время замечания'], ';', '"', '\\');
+    fputcsv(
+        $output,
+        [
+            'Объект',
+            'Адрес',
+            'Пост',
+            'Главный охранник',
+            'Охранник',
+            'Начало смены',
+            'Окончание смены',
+            'Замечание',
+            'Время замечания'
+        ],
+        ';',
+        '"',
+        '\\'
+    );
 
     foreach ($rows as $row) {
         $headGuard = $row['head_guard_name'] ?: '—';
@@ -180,8 +196,7 @@ $postsWithReports = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
             <div class="form-actions">
-                <button type="submit" class="btn btn-primary">Обновить</button>
-                <a href="?export=csv&from=<?= urlencode($from) ?>&to=<?= urlencode($to) ?>" class="btn btn-ghost">Выгрузить CSV</a>
+                <a href="?export=csv&from=<?= urlencode($from) ?>&to=<?= urlencode($to) ?>" class="btn btn-primary">Получить CSV</a>
             </div>
         </form>
 

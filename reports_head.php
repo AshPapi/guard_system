@@ -24,86 +24,149 @@ $from = $_GET['from'] ?? date('Y-m-d', strtotime('-30 days'));
 $to = $_GET['to'] ?? date('Y-m-d');
 $toEnd = date('Y-m-d 23:59:59', strtotime($to));
 
-function fetchHeadGuardNotes(PDO $pdo, int $postId, string $from, string $toEnd): array
+function fetchShiftReportRows(PDO $pdo, int $postId, string $from, string $toEnd): array
 {
     $stmt = $pdo->prepare("
-        SELECT start_time, end_time, description
-        FROM shifts
-        WHERE post_id = ? AND description IS NOT NULL
-          AND start_time >= ? AND start_time <= ?
-        ORDER BY start_time ASC
+        SELECT
+            e.id AS guard_id,
+            e.full_name AS guard_name,
+            s.start_time,
+            s.end_time,
+            s.description AS shift_description,
+            CASE WHEN s.description IS NOT NULL THEN s.start_time ELSE NULL END AS shift_comment_date
+        FROM shifts s
+        LEFT JOIN shift_guards sg ON s.id = sg.shift_id
+        LEFT JOIN employees e ON sg.guard_id = e.id
+        WHERE s.post_id = ?
+          AND s.start_time >= ?
+          AND s.start_time <= ?
+        ORDER BY s.start_time DESC
+    ");
+    $stmt->execute([$postId, $from, $toEnd]);
+    $shifts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    foreach ($shifts as &$shift) {
+        $guardId = $shift['guard_id'];
+        $startTime = $shift['start_time'];
+        $endTime = $shift['end_time'] ?: date('Y-m-d H:i:s');
+        
+        $remarkStmt = $pdo->prepare("
+            SELECT text, created_at
+            FROM remarks 
+            WHERE employee_id = ?
+              AND created_at >= ?
+              AND created_at <= ?
+            ORDER BY created_at DESC
+        ");
+        $remarkStmt->execute([$guardId, $startTime, $endTime]);
+        $allRemarks = $remarkStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $remarksText = [];
+        foreach ($allRemarks as $remark) {
+            $remarksText[] = date('d.m.Y H:i', strtotime($remark['created_at'])) . ': ' . $remark['text'];
+        }
+        
+        $shift['all_remarks_text'] = $remarksText ? implode('; ', $remarksText) : '—';
+        $shift['remarks_count'] = count($allRemarks);
+    }
+    
+    return $shifts;
+}
+
+function fetchPostGuards(PDO $pdo, int $postId): array
+{
+    $stmt = $pdo->prepare("
+        SELECT DISTINCT e.id, e.full_name
+        FROM shift_guards sg
+        JOIN shifts s ON sg.shift_id = s.id
+        JOIN employees e ON sg.guard_id = e.id
+        WHERE s.post_id = ?
+          AND e.position = 'guard'
+          AND e.is_active = true
+        ORDER BY e.full_name
+    ");
+    $stmt->execute([$postId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function fetchPostRemarks(PDO $pdo, int $postId, string $from, string $toEnd): array
+{
+    $stmt = $pdo->prepare("
+        SELECT r.id, r.employee_id, e.full_name AS guard_name, r.text, r.created_at
+        FROM remarks r
+        JOIN employees e ON r.employee_id = e.id
+        WHERE EXISTS (
+            SELECT 1
+            FROM shift_guards sg
+            JOIN shifts s ON sg.shift_id = s.id
+            WHERE sg.guard_id = r.employee_id
+              AND s.post_id = ?
+        )
+          AND r.created_at >= ?
+          AND r.created_at <= ?
+        ORDER BY r.created_at DESC
     ");
     $stmt->execute([$postId, $from, $toEnd]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 if (isset($_GET['export']) && $_GET['export'] === 'csv') {
-    $stmt = $pdo->prepare("
-        SELECT 
-            e.full_name AS guard_name,
-            s.start_time,
-            s.end_time,
-            r.text AS remark_text,
-            r.created_at AS remark_date,
-            s.description AS shift_description
-        FROM shifts s
-        LEFT JOIN shift_guards sg ON s.id = sg.shift_id
-        LEFT JOIN employees e ON sg.guard_id = e.id
-        LEFT JOIN remarks r ON e.id = r.employee_id 
-            AND r.created_at >= s.start_time 
-            AND r.created_at <= COALESCE(s.end_time, NOW())
-        WHERE s.post_id = ? 
-          AND s.start_time >= ? 
-          AND s.start_time <= ?
-        ORDER BY s.start_time DESC
-    ");
-    $stmt->execute([$postId, $from, $toEnd]);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $headGuardNotes = fetchHeadGuardNotes($pdo, $postId, $from, $toEnd);
-    foreach ($headGuardNotes as $note) {
-        $rows[] = [
-            'guard_name' => $headGuardName,
-            'start_time' => $note['start_time'],
-            'end_time' => $note['end_time'],
-            'remark_text' => '',
-            'remark_date' => null,
-            'shift_description' => $note['description'] ?? ''
-        ];
-    }
-    usort($rows, function ($a, $b) {
-        return strcmp($b['start_time'] ?? '', $a['start_time'] ?? '');
-    });
+    $rows = fetchShiftReportRows($pdo, $postId, $from, $toEnd);
 
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="report_' . $postContext['object_name'] . '_post' . $postContext['post_number'] . '_' . date('Y-m-d') . '.csv"');
 
     $output = fopen('php://output', 'w');
     fwrite($output, "\xEF\xBB\xBF");
-    fputcsv($output, ['Сотрудник', 'Начало смены', 'Окончание смены', 'Замечание', 'Время замечания', 'Комментарий смены'], ';', '"', '\\');
+    fputcsv(
+    $output,
+    [
+        'Объект',
+        'Пост', 
+        'Старший охранник',
+        'Охранник',
+        'Начало смены',
+        'Конец смены',
+        'Все замечания', 
+        'Количество замечаний', 
+        'Комментарий смены',
+        'Дата комментария смены'
+    ],
+    ';',
+    '"',
+    '\\'
+);
+
 
     foreach ($rows as $row) {
-        $guard = $row['guard_name'] ?: (!empty($row['shift_description']) ? $headGuardName : '—');
-        $start = $row['start_time'] ? new DateTime($row['start_time']) : null;
-        $end = $row['end_time'] ? new DateTime($row['end_time']) : null;
-        $startFormatted = $start ? '"' . $start->format('d.m.Y H:i') . '"' : '—';
-        $endFormatted = $end ? '"' . $end->format('d.m.Y H:i') . '"' : '—';
-        $remark = $row['remark_text'] ?: '—';
-        $remarkDate = $row['remark_date'] ? '"' . date('d.m.Y H:i', strtotime($row['remark_date'])) . '"' : '—';
-        $description = $row['shift_description'] ?: '—';
+    $guard = $row['guard_name'] ?: '—';
+    $start = $row['start_time'] ? new DateTime($row['start_time']) : null;
+    $end = $row['end_time'] ? new DateTime($row['end_time']) : null;
+    $startFormatted = $start ? $start->format('d.m.Y H:i') : '—';
+    $endFormatted = $end ? $end->format('d.m.Y H:i') : '—';
+    
+    $allRemarks = $row['all_remarks_text'] ?? '—';
+    $remarksCount = $row['remarks_count'] ?? 0;
+    
+    $description = $row['shift_description'] ?: '—';
+    $commentDate = $row['shift_comment_date'] ? date('d.m.Y H:i', strtotime($row['shift_comment_date'])) : '—';
 
-        fputcsv($output, [
-            $guard,
-            $startFormatted,
-            $endFormatted,
-            $remark,
-            $remarkDate,
-            $description
-        ], ';', '"', '\\');
+    fputcsv($output, [
+        $postContext['object_name'],
+        '№ ' . $postContext['post_number'],
+        $headGuardName,
+        $guard,
+        $startFormatted,
+        $endFormatted,
+        $allRemarks, 
+        $remarksCount, 
+        $description,
+        $commentDate
+    ], ';', '"', '\\');
     }
     fclose($output);
     exit;
 }
-
 function redirectBackWithFlash(?string $success = null, ?string $error = null): void
 {
     if ($success) {
@@ -128,6 +191,11 @@ $createForm = [
     'period_end' => date('Y-m-d'),
     'summary' => '',
     'actions_plan' => ''
+];
+
+$remarkForm = [
+    'guard_id' => '',
+    'remark_text' => ''
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -301,30 +369,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             deleteReportFile($pdo, $fileId, $uploadDir);
             redirectBackWithFlash('Файл удалён.');
             break;
+        case 'add_remark':
+            $guardId = (int)($_POST['guard_id'] ?? 0);
+            $remarkText = trim($_POST['remark_text'] ?? '');
+            $remarkForm = [
+                'guard_id' => $guardId ?: '',
+                'remark_text' => $remarkText
+            ];
+
+            $errors = [];
+            if ($guardId <= 0) {
+                $errors[] = 'Выберите охранника, кому добавить замечание.';
+            }
+            if ($remarkText === '') {
+                $errors[] = 'Текст замечания не может быть пустым.';
+            }
+
+            if (!$errors) {
+                $stmt = $pdo->prepare("
+                    SELECT 1
+                    FROM employees
+                    WHERE id = ? AND position = 'guard' AND is_active = true
+                ");
+                $stmt->execute([$guardId]);
+                if (!$stmt->fetchColumn()) {
+                    $errors[] = 'Выбранный охранник не существует или не активен.';
+                }
+            }
+
+            if (!$errors) {
+                $stmt = $pdo->prepare("
+                    SELECT 1
+                    FROM shift_guards sg
+                    JOIN shifts s ON sg.shift_id = s.id
+                    WHERE sg.guard_id = ? AND s.post_id = ?
+                    LIMIT 1
+                ");
+                $stmt->execute([$guardId, $postId]);
+                if (!$stmt->fetchColumn()) {
+                    $errors[] = 'Этот охранник не работал на вашем посту.';
+                }
+            }
+
+            if ($errors) {
+                $feedback['error'] = implode(' ', $errors);
+                break;
+            }
+
+            try {
+                $stmt = $pdo->prepare("INSERT INTO remarks (employee_id, text) VALUES (?, ?)");
+                $stmt->execute([$guardId, $remarkText]);
+            } catch (Exception $e) {
+                $feedback['error'] = 'Не удалось добавить замечание: ' . $e->getMessage();
+                break;
+            }
+
+            $remarkForm = [
+                'guard_id' => '',
+                'remark_text' => ''
+            ];
+
+            redirectBackWithFlash('Замечание добавлено.');
+            break;
+
     }
 }
 
-$stmt = $pdo->prepare("
-    SELECT 
-        e.full_name AS guard_name,
-        s.start_time,
-        s.end_time,
-        r.text AS remark_text,
-        r.created_at AS remark_date,
-        s.description AS shift_description
-    FROM shifts s
-    LEFT JOIN shift_guards sg ON s.id = sg.shift_id
-    LEFT JOIN employees e ON sg.guard_id = e.id
-    LEFT JOIN remarks r ON e.id = r.employee_id 
-        AND r.created_at >= s.start_time 
-        AND r.created_at <= COALESCE(s.end_time, NOW())
-    WHERE s.post_id = ? 
-      AND s.start_time >= ? 
-      AND s.start_time <= ?
-    ORDER BY s.start_time DESC
-");
-$stmt->execute([$postId, $from, $toEnd]);
-$shifts = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$shifts = fetchShiftReportRows($pdo, $postId, $from, $toEnd);
+$postGuards = fetchPostGuards($pdo, $postId);
+$postRemarks = fetchPostRemarks($pdo, $postId, $from, $toEnd);
 
 $stmt = $pdo->prepare("
     SELECT *
@@ -409,6 +523,34 @@ $filesMap = fetchReportFilesForReports($pdo, array_column($postReports, 'id'));
             </div>
         </div>
 
+        <div class="card">
+            <h3 class="section-title">Замечания по охране</h3>
+            <?php if (empty($postGuards)): ?>
+                <p class="text-muted">Нет активных охранников, прикреплённых к посту.</p>
+            <?php else: ?>
+                <form method="POST">
+                    <input type="hidden" name="action" value="add_remark">
+                    <div class="form-group">
+                        <label>Охранник *</label>
+                        <select name="guard_id" required>
+                            <option value="">Выберите охранника из списка</option>
+                            <?php foreach ($postGuards as $guard): ?>
+                                <option value="<?= $guard['id'] ?>" <?= (string)$guard['id'] === (string)$remarkForm['guard_id'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($guard['full_name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Текст замечания *</label>
+                        <textarea name="remark_text" rows="3" required><?= htmlspecialchars($remarkForm['remark_text']) ?></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Добавить замечание</button>
+                    </div>
+                </form>
+            <?php endif; ?>
+        </div>
         <div class="card">
             <h3 class="section-title">Мои отчёты</h3>
             <?php if (empty($postReports)): ?>
@@ -517,32 +659,42 @@ $filesMap = fetchReportFilesForReports($pdo, array_column($postReports, 'id'));
         </div>
 
         <div class="table-card">
-            <h3 class="section-title">Журнал смен (только охранники поста)</h3>
+            <h3 class="section-title">Отчёт по сменам (для проверки перед формированием CSV)</h3>
             <?php if ($shifts): ?>
                 <table>
                     <thead>
                         <tr>
-                            <th>Сотрудник</th>
+                            <th>Объект</th>
+                            <th>Пост</th>
+                            <th>Главный охранник</th>
+                            <th>Охранник</th>
                             <th>Начало смены</th>
-                            <th>Окончание смены</th>
-                            <th>Замечание</th>
-                            <th>Время замечания</th>
+                            <th>Конец смены</th>
+                            <th>Дата и замечания</th> 
+                            <th>Кол-во замечаний</th> 
+                            <th>Комментарий смены</th>
+                            <th>Дата комментария</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php foreach ($shifts as $shift): ?>
                             <tr>
-                                <td data-label="Сотрудник"><?= htmlspecialchars($shift['guard_name'] ?? '—') ?></td>
-                                <td data-label="Начало"><?= $shift['start_time'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['start_time']))) : '—' ?></td>
-                                <td data-label="Окончание"><?= $shift['end_time'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['end_time']))) : '—' ?></td>
-                                <td data-label="Замечание"><?= htmlspecialchars($shift['remark_text'] ?? '—') ?></td>
-                                <td data-label="Время замечания"><?= $shift['remark_date'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['remark_date']))) : '—' ?></td>
+                                <td data-label="Объект"><?= htmlspecialchars($postContext['object_name']) ?></td>
+                                <td data-label="Пост">№ <?= (int)$postContext['post_number'] ?></td>
+                                <td data-label="Главный охранник"><?= htmlspecialchars($headGuardName) ?></td>
+                                <td data-label="Охранник"><?= htmlspecialchars($shift['guard_name'] ?? '—') ?></td>
+                                <td data-label="Начало смены"><?= $shift['start_time'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['start_time']))) : '—' ?></td>
+                                <td data-label="Конец смены"><?= $shift['end_time'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['end_time']))) : '—' ?></td>
+                                <td data-label="Все замечания"><?= nl2br(htmlspecialchars($shift['all_remarks_text'] ?? '—')) ?></td> <!-- Изменено -->
+                                <td data-label="Кол-во замечаний"><?= htmlspecialchars($shift['remarks_count'] ?? 0) ?></td> <!-- Добавлено -->
+                                <td data-label="Комментарий смены"><?= htmlspecialchars($shift['shift_description'] ?? '—') ?></td>
+                                <td data-label="Дата комментария"><?= $shift['shift_comment_date'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['shift_comment_date']))) : '—' ?></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
             <?php else: ?>
-                <p>За выбранный период смен не найдено.</p>
+                <p>Нет данных по сменам за выбранный период.</p>
             <?php endif; ?>
         </div>
     </div>
