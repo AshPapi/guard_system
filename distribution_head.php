@@ -22,14 +22,21 @@ if (!$post) {
 }
 
 $postId = $post['id'];
+$shiftDescriptionLimit = 350;
+if (!defined('SHIFT_DESCRIPTION_MAX_LENGTH')) {
+    define('SHIFT_DESCRIPTION_MAX_LENGTH', $shiftDescriptionLimit);
+}
 
 $error = '';
 $success = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_description') {
     $description = trim($_POST['description'] ?? '');
+    $descLength = function_exists('mb_strlen') ? mb_strlen($description, 'UTF-8') : strlen($description);
     
     if (!$description) {
-        $error = 'Описание не может быть пустым.';
+        $error = 'Описание смены не может быть пустым.';
+    } elseif ($descLength > SHIFT_DESCRIPTION_MAX_LENGTH) {
+        $error = 'Описание смены не должно превышать ' . SHIFT_DESCRIPTION_MAX_LENGTH . ' символов.';
     } else {
         try {
             $stmt = $pdo->prepare("
@@ -42,7 +49,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_d
             if ($existingShift) {
                 $stmt = $pdo->prepare("
                     UPDATE shifts 
-                    SET description = COALESCE(description, '') || E'\n\n' || ? 
+                    SET description = COALESCE(description, '') || E'
+
+' || ? 
                     WHERE id = ?
                 ");
                 $stmt->execute([$description, $existingShift['id']]);
@@ -57,9 +66,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add_d
                 $stmt->execute([$postId, $start, $end, $description]);
             }
             
-            $success = 'Описание сохранено!';
+            $success = 'Описание смены добавлено.';
         } catch (Exception $e) {
-            $error = 'Ошибка: ' . $e->getMessage();
+            $error = 'Error: ' . $e->getMessage();
         }
     }
 }
@@ -226,7 +235,7 @@ $descriptions = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <input type="hidden" name="action" value="add_description">
                 <div class="form-group">
                     <label>Описание события *</label>
-                    <textarea name="description" required 
+                    <textarea name="description" maxlength="<?= SHIFT_DESCRIPTION_MAX_LENGTH ?>" required 
                               placeholder="Опишите произошедшее на смене..."><?= 
                         htmlspecialchars($_POST['description'] ?? '') 
                     ?></textarea>

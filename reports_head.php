@@ -11,6 +11,16 @@ if (!($_SESSION['is_head_guard'] ?? false)) {
 ensureReportInfrastructure($pdo);
 $uploadDir = ensureReportUploadDir();
 
+$headTextLimit = 250;
+if (!defined('HEAD_TEXT_MAX_LENGTH')) {
+    define('HEAD_TEXT_MAX_LENGTH', $headTextLimit);
+}
+
+$headRemarkLimit = 250;
+if (!defined('HEAD_REMARK_MAX_LENGTH')) {
+    define('HEAD_REMARK_MAX_LENGTH', $headRemarkLimit);
+}
+
 $postContext = getHeadGuardPost($pdo, $_SESSION['user_id']);
 if (!$postContext) {
     die('Для пользователя не найден пост главного охранника.');
@@ -226,7 +236,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($summary === '') {
                 $errors[] = 'Необходимо заполнить сводку.';
             }
-
+            $summaryLength = function_exists('mb_strlen') ? mb_strlen($summary, 'UTF-8') : strlen($summary);
+            if ($summaryLength > HEAD_TEXT_MAX_LENGTH) {
+                $errors[] = 'Текст сводки не должен превышать ' . HEAD_TEXT_MAX_LENGTH . ' символов.';
+            }
+            if ($actionsPlan !== '') {
+                $actionsLen = function_exists('mb_strlen') ? mb_strlen($actionsPlan, 'UTF-8') : strlen($actionsPlan);
+                if ($actionsLen > HEAD_TEXT_MAX_LENGTH) {
+                    $errors[] = 'Текст плана действий не должен превышать ' . HEAD_TEXT_MAX_LENGTH . ' символов.';
+                }
+            }
             if ($errors) {
                 $feedback['error'] = implode(' ', $errors);
                 break;
@@ -276,7 +295,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($summary === '') {
                 $errors[] = 'Необходимо заполнить сводку.';
             }
-
+            $summaryLength = function_exists('mb_strlen') ? mb_strlen($summary, 'UTF-8') : strlen($summary);
+            if ($summaryLength > HEAD_TEXT_MAX_LENGTH) {
+                $errors[] = 'Текст сводки не должен превышать ' . HEAD_TEXT_MAX_LENGTH . ' символов.';
+            }
+            if ($actionsPlan !== '') {
+                $actionsLen = function_exists('mb_strlen') ? mb_strlen($actionsPlan, 'UTF-8') : strlen($actionsPlan);
+                if ($actionsLen > HEAD_TEXT_MAX_LENGTH) {
+                    $errors[] = 'Текст плана действий не должен превышать ' . HEAD_TEXT_MAX_LENGTH . ' символов.';
+                }
+            }
             if ($errors) {
                 $feedback['error'] = implode(' ', $errors);
                 break;
@@ -379,12 +407,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $errors = [];
             if ($guardId <= 0) {
-                $errors[] = 'Выберите охранника, кому добавить замечание.';
+                $errors[] = 'Необходимо выбрать охранника, кому добавляется замечание.';
             }
             if ($remarkText === '') {
                 $errors[] = 'Текст замечания не может быть пустым.';
             }
-
+            $remarkLength = function_exists('mb_strlen') ? mb_strlen($remarkText, "UTF-8") : strlen($remarkText);
+            if ($remarkLength > HEAD_REMARK_MAX_LENGTH) {
+                $errors[] = 'Замечание не должно превышать ' . HEAD_REMARK_MAX_LENGTH . ' символов.';
+            }
             if (!$errors) {
                 $stmt = $pdo->prepare("
                     SELECT 1
@@ -493,11 +524,11 @@ $filesMap = fetchReportFilesForReports($pdo, array_column($postReports, 'id'));
                     </div>
                     <div class="form-group">
                         <label>Сводка по посту *</label>
-                        <textarea name="summary" rows="4" required><?= htmlspecialchars($createForm['summary']) ?></textarea>
+                        <textarea name="summary" rows="4" maxlength="<?= HEAD_TEXT_MAX_LENGTH ?>" required><?= htmlspecialchars($createForm['summary']) ?></textarea>
                     </div>
                     <div class="form-group">
                         <label>Принятые меры / план действий</label>
-                        <textarea name="actions_plan" rows="3"><?= htmlspecialchars($createForm['actions_plan']) ?></textarea>
+                        <textarea name="actions_plan" rows="3" maxlength="<?= HEAD_TEXT_MAX_LENGTH ?>"><?= htmlspecialchars($createForm['actions_plan']) ?></textarea>
                     </div>
                     <div class="form-group">
                         <label>Файлы отчёта</label>
@@ -543,7 +574,8 @@ $filesMap = fetchReportFilesForReports($pdo, array_column($postReports, 'id'));
                     </div>
                     <div class="form-group">
                         <label>Текст замечания *</label>
-                        <textarea name="remark_text" rows="3" required><?= htmlspecialchars($remarkForm['remark_text']) ?></textarea>
+                        <textarea name="remark_text" rows="3" maxlength="<?= HEAD_REMARK_MAX_LENGTH ?>" required><?= htmlspecialchars($remarkForm['remark_text']) ?></textarea>
+
                     </div>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary">Добавить замечание</button>
@@ -615,11 +647,11 @@ $filesMap = fetchReportFilesForReports($pdo, array_column($postReports, 'id'));
                                         </div>
                                         <div class="form-group">
                                             <label>Сводка *</label>
-                                            <textarea name="summary" rows="3" required><?= htmlspecialchars($report['summary']) ?></textarea>
+                                            <textarea name="summary" rows="3" maxlength="<?= HEAD_TEXT_MAX_LENGTH ?>" required><?= htmlspecialchars($report['summary']) ?></textarea>
                                         </div>
                                         <div class="form-group">
                                             <label>Принятые меры</label>
-                                            <textarea name="actions_plan" rows="3"><?= htmlspecialchars($report['actions'] ?? '') ?></textarea>
+                                            <textarea name="actions_plan" rows="3" maxlength="<?= HEAD_TEXT_MAX_LENGTH ?>"><?= htmlspecialchars($report['actions'] ?? '') ?></textarea>
                                         </div>
                                         <div class="form-group">
                                             <label>Добавить файлы</label>
@@ -685,8 +717,8 @@ $filesMap = fetchReportFilesForReports($pdo, array_column($postReports, 'id'));
                                 <td data-label="Охранник"><?= htmlspecialchars($shift['guard_name'] ?? '—') ?></td>
                                 <td data-label="Начало смены"><?= $shift['start_time'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['start_time']))) : '—' ?></td>
                                 <td data-label="Конец смены"><?= $shift['end_time'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['end_time']))) : '—' ?></td>
-                                <td data-label="Все замечания"><?= nl2br(htmlspecialchars($shift['all_remarks_text'] ?? '—')) ?></td> <!-- Изменено -->
-                                <td data-label="Кол-во замечаний"><?= htmlspecialchars($shift['remarks_count'] ?? 0) ?></td> <!-- Добавлено -->
+                                <td data-label="Все замечания"><?= nl2br(htmlspecialchars($shift['all_remarks_text'] ?? '—')) ?></td>
+                                <td data-label="Кол-во замечаний"><?= htmlspecialchars($shift['remarks_count'] ?? 0) ?></td>
                                 <td data-label="Комментарий смены"><?= htmlspecialchars($shift['shift_description'] ?? '—') ?></td>
                                 <td data-label="Дата комментария"><?= $shift['shift_comment_date'] ? htmlspecialchars(date('d.m.Y H:i', strtotime($shift['shift_comment_date']))) : '—' ?></td>
                             </tr>
@@ -700,6 +732,16 @@ $filesMap = fetchReportFilesForReports($pdo, array_column($postReports, 'id'));
     </div>
 </div>
 <script>
+    const textLimit = <?= HEAD_TEXT_MAX_LENGTH ?>;
+    document.querySelectorAll('textarea[name="summary"], textarea[name="actions_plan"]').forEach((el) => {
+        el.setAttribute('maxlength', textLimit);
+        el.addEventListener('input', () => {
+            if (el.value.length > textLimit) {
+                el.value = el.value.slice(0, textLimit);
+            }
+        });
+    });
+
     const downloadBtn = document.getElementById('download-report-csv');
     if (downloadBtn) {
         downloadBtn.addEventListener('click', () => {

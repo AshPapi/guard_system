@@ -87,13 +87,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['shift_id'])) {
             $stmt->execute([$guardId]);
             $guardMeta = $stmt->fetch(PDO::FETCH_ASSOC);
             if (!$guardMeta || !$guardMeta['is_active'] || $guardMeta['position'] !== 'guard') {
-                throw new Exception('?????????? ????????? ?????????? ??????????.');
+                throw new Exception('Нельзя назначить этого сотрудника на смену.');
             }
 
             if (!empty($guardMeta['hire_date'])) {
                 $hireDateTs = strtotime($guardMeta['hire_date'] . ' 00:00:00');
                 if ($hireDateTs && $startTs < $hireDateTs) {
-                    throw new Exception('???? ?????? ????? ?? ????? ???? ?????? ???? ?????? ?? ??????.');
+                    throw new Exception('Начало смены не может быть раньше даты найма охранника.');
                 }
             }
 

@@ -3,18 +3,20 @@ require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/report_helpers.php';
 
-if ($_SESSION['is_head_guard'] ?? false) {
-    header('Location: ../dashboard.php');
-    exit;
-}
+const DISMISSED_CSV_HEADER = [
+    'Объект',
+    'Адрес', 
+    'Пост',
+    'Главный охранник',
+    'Охранник',
+    'Начало смены',
+    'Окончание смены',
+    'Замечание',
+    'Время замечания'
+];
 
-ensureReportInfrastructure($pdo);
-
-$from = $_GET['from'] ?? date('Y-m-d', strtotime('-30 days'));
-$to = $_GET['to'] ?? date('Y-m-d');
-$toEnd = date('Y-m-d 23:59:59', strtotime($to));
-
-if (isset($_GET['export']) && $_GET['export'] === 'csv') {
+function fetchDismissedRows(PDO $pdo, string $from, string $toEnd): array
+{
     $stmt = $pdo->prepare("
         SELECT DISTINCT
             o.name AS object_name,
@@ -39,32 +41,67 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
         ORDER BY o.name, p.post_number, hg.full_name, e.full_name, s.start_time
     ");
     $stmt->execute([$from, $toEnd]);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
 
+function buildDismissedReport(array $rawData): array
+{
+    $report = [];
+    foreach ($rawData as $row) {
+        $objKey = $row['object_name'] . '|' . $row['address'];
+        $postKey = $row['post_number'];
+
+        if (!isset($report[$objKey])) {
+            $report[$objKey] = [
+                'name' => $row['object_name'],
+                'address' => $row['address'],
+                'posts' => []
+            ];
+        }
+
+        if (!isset($report[$objKey]['posts'][$postKey])) {
+            $report[$objKey]['posts'][$postKey] = [
+                'number' => $row['post_number'],
+                'head_guard' => $row['head_guard_name'],
+                'guards' => []
+            ];
+        }
+
+        if ($row['guard_name']) {
+            $start = $row['start_time'] ? new DateTime($row['start_time']) : null;
+            $end = $row['end_time'] ? new DateTime($row['end_time']) : null;
+            $report[$objKey]['posts'][$postKey]['guards'][] = [
+                'name' => $row['guard_name'],
+                'start' => $start,
+                'end' => $end,
+                'remark' => $row['remark_text'],
+                'remark_date' => $row['remark_date']
+            ];
+        }
+    }
+    return $report;
+}
+
+if ($_SESSION['is_head_guard'] ?? false) {
+    header('Location: ../dashboard.php');
+    exit;
+}
+
+ensureReportInfrastructure($pdo);
+
+$from = $_GET['from'] ?? date('Y-m-d', strtotime('-30 days'));
+$to = $_GET['to'] ?? date('Y-m-d');
+$toEnd = date('Y-m-d 23:59:59', strtotime($to));
+$rawData = fetchDismissedRows($pdo, $from, $toEnd);
+
+if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="full_report_' . date('Y-m-d') . '.csv"');
 
     $output = fopen('php://output', 'w');
     fwrite($output, "\xEF\xBB\xBF");
-    fputcsv(
-        $output,
-        [
-            'Объект',
-            'Адрес',
-            'Пост',
-            'Главный охранник',
-            'Охранник',
-            'Начало смены',
-            'Окончание смены',
-            'Замечание',
-            'Время замечания'
-        ],
-        ';',
-        '"',
-        '\\'
-    );
-
-    foreach ($rows as $row) {
+    fputcsv($output, DISMISSED_CSV_HEADER, ';', '"', '\\');
+    foreach ($rawData as $row) {
         $headGuard = $row['head_guard_name'] ?: '—';
         $guard = $row['guard_name'] ?: '—';
         $start = $row['start_time'] ? new DateTime($row['start_time']) : null;
@@ -90,65 +127,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     exit;
 }
 
-$stmt = $pdo->prepare("
-    SELECT DISTINCT
-        o.name AS object_name,
-        o.address,
-        p.post_number,
-        hg.full_name AS head_guard_name,
-        e.full_name AS guard_name,
-        s.start_time,
-        s.end_time,
-        r.text AS remark_text,
-        r.created_at AS remark_date
-    FROM posts p
-    JOIN objects o ON p.object_id = o.id
-    LEFT JOIN employees hg ON p.head_guard_id = hg.id
-    LEFT JOIN shifts s ON p.id = s.post_id 
-        AND s.start_time >= ? AND s.start_time <= ?
-    LEFT JOIN shift_guards sg ON s.id = sg.shift_id
-    LEFT JOIN employees e ON sg.guard_id = e.id
-    LEFT JOIN remarks r ON e.id = r.employee_id 
-        AND r.created_at >= s.start_time 
-        AND r.created_at <= COALESCE(s.end_time, NOW())
-    ORDER BY o.name, p.post_number, hg.full_name, e.full_name, s.start_time
-");
-$stmt->execute([$from, $toEnd]);
-$rawData = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-$report = [];
-foreach ($rawData as $row) {
-    $objKey = $row['object_name'] . '|' . $row['address'];
-    $postKey = $row['post_number'];
-
-    if (!isset($report[$objKey])) {
-        $report[$objKey] = [
-            'name' => $row['object_name'],
-            'address' => $row['address'],
-            'posts' => []
-        ];
-    }
-
-    if (!isset($report[$objKey]['posts'][$postKey])) {
-        $report[$objKey]['posts'][$postKey] = [
-            'number' => $row['post_number'],
-            'head_guard' => $row['head_guard_name'],
-            'guards' => []
-        ];
-    }
-
-    if ($row['guard_name']) {
-        $start = $row['start_time'] ? new DateTime($row['start_time']) : null;
-        $end = $row['end_time'] ? new DateTime($row['end_time']) : null;
-        $report[$objKey]['posts'][$postKey]['guards'][] = [
-            'name' => $row['guard_name'],
-            'start' => $start,
-            'end' => $end,
-            'remark' => $row['remark_text'],
-            'remark_date' => $row['remark_date']
-        ];
-    }
-}
+$report = buildDismissedReport($rawData);
 
 $stmt = $pdo->query("
     SELECT 
@@ -210,14 +189,14 @@ $postsWithReports = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <p>Адрес: <?= htmlspecialchars($object['address']) ?></p>
 
                     <?php foreach ($object['posts'] as $post): ?>
-                        <div class="post-item" style="flex-direction: column; align-items: flex-start;">
+                        <div class="post-item post-item-column">
                             <div class="post-info">
                                 <div class="post-number">Пост №<?= (int)$post['number'] ?></div>
                                 <div class="head-guard">
                                     Главный охранник: <?= htmlspecialchars($post['head_guard'] ?? '—') ?>
                                 </div>
                             </div>
-                            <div class="post-guards" style="width:100%;">
+                            <div class="post-guards post-guards-full">
                                 <?php if (!empty($post['guards'])): ?>
                                     <?php foreach ($post['guards'] as $guard): ?>
                                         <div class="mini-card">
@@ -245,7 +224,7 @@ $postsWithReports = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <?php endforeach; ?>
         <?php endif; ?>
 
-        <div class="card" style="margin-top:30px;">
+        <div class="card mt-30">
             <h3 class="section-title">Файлы отчётов по постам</h3>
             <?php if (empty($postsWithReports)): ?>
                 <p class="text-muted">Загруженных отчётных файлов пока нет.</p>
